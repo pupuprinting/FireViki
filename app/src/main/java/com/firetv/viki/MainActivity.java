@@ -147,6 +147,21 @@ public class MainActivity extends Activity {
             public boolean shouldOverrideUrlLoading(WebView view, String url) {
                 return !isWeb(Uri.parse(url));
             }
+                        @Override
+            public void onPageFinished(WebView view, String url) {
+                view.evaluateJavascript(
+                        "(function(){var s=document.createElement('style');"
+                        + "s.textContent='*,*::before,*::after{"
+                        + "animation-duration:0.001s!important;"
+                        + "animation-delay:0s!important;"
+                        + "animation-iteration-count:1!important;"
+                        + "transition-duration:0.001s!important;"
+                        + "transition-delay:0s!important;"
+                        + "backdrop-filter:none!important;"
+                        + "scroll-behavior:auto!important}';"
+                        + "document.head.appendChild(s);})()",
+                        null);
+            }
         });
 
         web.setWebChromeClient(new WebChromeClient() {
