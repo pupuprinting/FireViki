@@ -241,4 +241,192 @@ public class MainActivity extends Activity {
                 case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE:
                 case KeyEvent.KEYCODE_MEDIA_PLAY:
                 case KeyEvent.KEYCODE_MEDIA_PAUSE:
-                    video("if(v.paused)v.play(
+                    video("if(v.paused)v.play();else v.pause();");
+                        return true;
+                }
+            }
+        }
+
+        if (down) {
+            switch (code) {
+                case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE:
+                case KeyEvent.KEYCODE_MEDIA_PLAY:
+                case KeyEvent.KEYCODE_MEDIA_PAUSE:
+                    video("if(v.paused)v.play();else v.pause();");
+                    return true;
+                case KeyEvent.KEYCODE_MEDIA_FAST_FORWARD:
+                    video("v.currentTime+=10;");
+                    return true;
+                case KeyEvent.KEYCODE_MEDIA_REWIND:
+                    video("v.currentTime=Math.max(0,v.currentTime-10);");
+                    return true;
+            }
+        }
+
+        if (customView != null) return super.dispatchKeyEvent(e);
+
+        switch (code) {
+            case KeyEvent.KEYCODE_DPAD_UP:
+                kUp = down;
+                updateTicker();
+                return true;
+            case KeyEvent.KEYCODE_DPAD_DOWN:
+                kDown = down;
+                updateTicker();
+                return true;
+            case KeyEvent.KEYCODE_DPAD_LEFT:
+                kLeft = down;
+                updateTicker();
+                return true;
+            case KeyEvent.KEYCODE_DPAD_RIGHT:
+                kRight = down;
+                updateTicker();
+                return true;
+            case KeyEvent.KEYCODE_DPAD_CENTER:
+            case KeyEvent.KEYCODE_ENTER:
+                if (down && e.getRepeatCount() == 0) click();
+                return true;
+            case KeyEvent.KEYCODE_BACK:
+                if (down) {
+                    if (web.canGoBack()) web.goBack();
+                    else finish();
+                }
+                return true;
+            case KeyEvent.KEYCODE_MENU:
+                if (down) {
+                    Toast.makeText(this, "Home", Toast.LENGTH_SHORT).show();
+                    web.loadUrl(HOME);
+                }
+                return true;
+        }
+        return super.dispatchKeyEvent(e);
+    }
+
+    private void video(String body) {
+        web.evaluateJavascript(
+                "(function(){var v=document.querySelector('video');if(!v)return;" + body + "})()",
+                null);
+    }
+
+    // ----------------------------------------------------------- puntatore
+
+    private void updateTicker() {
+        boolean any = kUp || kDown || kLeft || kRight;
+        if (any && !ticking) {
+            ticking = true;
+            heldSince = SystemClock.uptimeMillis();
+            lastTick = heldSince;
+            handler.post(ticker);
+        }
+    }
+
+    private final Runnable ticker = new Runnable() {
+        @Override
+        public void run() {
+            if (!(kUp || kDown || kLeft || kRight)) {
+                ticking = false;
+                return;
+            }
+            long now = SystemClock.uptimeMillis();
+            float held = (now - heldSince) / 1000f;
+            float speed = Math.min(350f + held * 1400f, 1600f); // pixel al secondo
+            float dt = Math.min(now - lastTick, 50) / 1000f;
+            lastTick = now;
+            float dx = ((kRight ? 1 : 0) - (kLeft ? 1 : 0)) * speed * dt;
+            float dy = ((kDown ? 1 : 0) - (kUp ? 1 : 0)) * speed * dt;
+            moveBy(dx, dy);
+            handler.postDelayed(this, 16);
+        }
+    };
+
+    private void moveBy(float dx, float dy) {
+        int w = root.getWidth(), h = root.getHeight();
+        cx = Math.max(0, Math.min(w - 1, cx + dx));
+        cy = Math.max(0, Math.min(h - 1, cy + dy));
+
+        final int edge = 70;
+        int sc = Math.round(Math.abs(dy) * 1.5f);
+        if (sc > 0) {
+            if (dy > 0 && cy >= h - edge) web.scrollBy(0, sc);
+            if (dy < 0 && cy <= edge) web.scrollBy(0, -sc);
+        }
+        cursor.setPos(cx, cy);
+    }
+
+    private void click() {
+        long t = SystemClock.uptimeMillis();
+        web.requestFocus();
+        MotionEvent d = MotionEvent.obtain(t, t, MotionEvent.ACTION_DOWN, cx, cy, 0);
+        d.setSource(InputDevice.SOURCE_TOUCHSCREEN);
+        web.dispatchTouchEvent(d);
+        d.recycle();
+        handler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                long t2 = SystemClock.uptimeMillis();
+                MotionEvent u = MotionEvent.obtain(t2, t2, MotionEvent.ACTION_UP, cx, cy, 0);
+                u.setSource(InputDevice.SOURCE_TOUCHSCREEN);
+                web.dispatchTouchEvent(u);
+                u.recycle();
+            }
+        }, 60);
+    }
+
+    // ----------------------------------------------------------- lifecycle
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        web.onResume();
+    }
+
+    @Override
+    protected void onPause() {
+        kUp = kDown = kLeft = kRight = false;
+        web.onPause();
+        CookieManager.getInstance().flush();
+        super.onPause();
+    }
+
+    @Override
+    protected void onDestroy() {
+        handler.removeCallbacksAndMessages(null);
+        root.removeAllViews();
+        web.destroy();
+        super.onDestroy();
+    }
+
+    // ------------------------------------------------------ vista cursore
+
+    private static class CursorView extends View {
+        private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint stroke = new Paint(Paint.ANTI_ALIAS_FLAG);
+
+        CursorView(Context c) {
+            super(c);
+            setFocusable(false);
+            setClickable(false);
+            fill.setColor(Color.argb(190, 255, 255, 255));
+            stroke.setColor(Color.BLACK);
+            stroke.setStyle(Paint.Style.STROKE);
+            stroke.setStrokeWidth(4);
+        }
+
+        void setPos(float px, float py) {
+            setTranslationX(px - CURSOR_SIZE / 2f);
+            setTranslationY(py - CURSOR_SIZE / 2f);
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            float c = CURSOR_SIZE / 2f;
+            canvas.drawCircle(c, c, 16, fill);
+            canvas.drawCircle(c, c, 16, stroke);
+        }
+
+        @Override
+        public boolean onTouchEvent(MotionEvent event) {
+            return false;
+        }
+    }
+}
