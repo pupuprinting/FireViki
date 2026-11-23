@@ -243,17 +243,6 @@ public class MainActivity extends Activity {
                 case KeyEvent.KEYCODE_MEDIA_PAUSE:
                     video("if(v.paused)v.play();else v.pause();");
                         return true;
-                }
-            }
-        }
-
-        if (down) {
-            switch (code) {
-                case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE:
-                case KeyEvent.KEYCODE_MEDIA_PLAY:
-                case KeyEvent.KEYCODE_MEDIA_PAUSE:
-                    video("if(v.paused)v.play();else v.pause();");
-                    return true;
                 case KeyEvent.KEYCODE_MEDIA_FAST_FORWARD:
                     video("v.currentTime+=10;");
                     return true;
