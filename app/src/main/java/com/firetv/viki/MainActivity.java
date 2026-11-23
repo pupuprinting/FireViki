@@ -1,7 +1,9 @@
 package com.firetv.viki;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
@@ -26,12 +28,15 @@ import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
 import android.widget.Toast;
 
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class MainActivity extends Activity {
 
     private static final String HOME = "https://www.viki.com/";
+    private static final int CURSOR_SIZE = 48;
 
     private FrameLayout root;
     private WebView web;
@@ -41,9 +46,13 @@ public class MainActivity extends Activity {
     private float cx, cy;
     private final Handler handler = new Handler();
 
+    private boolean kUp, kDown, kLeft, kRight, ticking;
+    private long heldSince, lastTick;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        installCrashReporter();
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
         root = new FrameLayout(this);
@@ -53,8 +62,7 @@ public class MainActivity extends Activity {
         cursor = new CursorView(this);
         root.addView(web, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        root.addView(cursor, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        root.addView(cursor, new FrameLayout.LayoutParams(CURSOR_SIZE, CURSOR_SIZE));
         setContentView(root);
 
         setupWebView();
@@ -65,11 +73,47 @@ public class MainActivity extends Activity {
                 cx = root.getWidth() / 2f;
                 cy = root.getHeight() / 2f;
                 cursor.setPos(cx, cy);
+                showLastCrash();
             }
         });
 
         web.loadUrl(HOME);
     }
+
+    // ------------------------------------------------------- report crash
+
+    private void installCrashReporter() {
+        final SharedPreferences sp = getSharedPreferences("crash", MODE_PRIVATE);
+        final Thread.UncaughtExceptionHandler old = Thread.getDefaultUncaughtExceptionHandler();
+        Thread.setDefaultUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() {
+            @Override
+            public void uncaughtException(Thread t, Throwable e) {
+                try {
+                    StringWriter sw = new StringWriter();
+                    e.printStackTrace(new PrintWriter(sw));
+                    String s = sw.toString();
+                    if (s.length() > 1200) s = s.substring(0, 1200);
+                    sp.edit().putString("last", s).commit();
+                } catch (Throwable ignored) {
+                }
+                if (old != null) old.uncaughtException(t, e);
+            }
+        });
+    }
+
+    private void showLastCrash() {
+        SharedPreferences sp = getSharedPreferences("crash", MODE_PRIVATE);
+        String last = sp.getString("last", null);
+        if (last == null) return;
+        sp.edit().remove("last").apply();
+        new AlertDialog.Builder(this)
+                .setTitle("Ultimo crash")
+                .setMessage(last)
+                .setPositiveButton("OK", null)
+                .show();
+    }
+
+    // ------------------------------------------------------------ webview
 
     private void setupWebView() {
         WebSettings s = web.getSettings();
@@ -114,6 +158,7 @@ public class MainActivity extends Activity {
                 }
                 customView = view;
                 customCallback = callback;
+                kUp = kDown = kLeft = kRight = false;
                 root.addView(view, new FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
                 web.setVisibility(View.GONE);
@@ -163,6 +208,8 @@ public class MainActivity extends Activity {
         cursor.setVisibility(View.VISIBLE);
     }
 
+    // --------------------------------------------------------------- tasti
+
     @Override
     public boolean dispatchKeyEvent(KeyEvent e) {
         int code = e.getKeyCode();
@@ -194,140 +241,4 @@ public class MainActivity extends Activity {
                 case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE:
                 case KeyEvent.KEYCODE_MEDIA_PLAY:
                 case KeyEvent.KEYCODE_MEDIA_PAUSE:
-                    video("if(v.paused)v.play();else v.pause();");
-                    return true;
-                case KeyEvent.KEYCODE_MEDIA_FAST_FORWARD:
-                    video("v.currentTime+=10;");
-                    return true;
-                case KeyEvent.KEYCODE_MEDIA_REWIND:
-                    video("v.currentTime=Math.max(0,v.currentTime-10);");
-                    return true;
-            }
-        }
-
-        if (customView != null) return super.dispatchKeyEvent(e);
-
-        switch (code) {
-            case KeyEvent.KEYCODE_DPAD_UP:
-                if (down) move(0, -1, e.getRepeatCount());
-                return true;
-            case KeyEvent.KEYCODE_DPAD_DOWN:
-                if (down) move(0, 1, e.getRepeatCount());
-                return true;
-            case KeyEvent.KEYCODE_DPAD_LEFT:
-                if (down) move(-1, 0, e.getRepeatCount());
-                return true;
-            case KeyEvent.KEYCODE_DPAD_RIGHT:
-                if (down) move(1, 0, e.getRepeatCount());
-                return true;
-            case KeyEvent.KEYCODE_DPAD_CENTER:
-            case KeyEvent.KEYCODE_ENTER:
-                if (down && e.getRepeatCount() == 0) click();
-                return true;
-            case KeyEvent.KEYCODE_BACK:
-                if (down) {
-                    if (web.canGoBack()) web.goBack();
-                    else finish();
-                }
-                return true;
-            case KeyEvent.KEYCODE_MENU:
-                if (down) {
-                    Toast.makeText(this, "Home", Toast.LENGTH_SHORT).show();
-                    web.loadUrl(HOME);
-                }
-                return true;
-        }
-        return super.dispatchKeyEvent(e);
-    }
-
-    private void video(String body) {
-        web.evaluateJavascript(
-                "(function(){var v=document.querySelector('video');if(!v)return;" + body + "})()",
-                null);
-    }
-
-    private void move(int dx, int dy, int repeat) {
-        float step = 14 + Math.min(repeat, 20) * 3;
-        int w = root.getWidth(), h = root.getHeight();
-        cx = Math.max(0, Math.min(w - 1, cx + dx * step));
-        cy = Math.max(0, Math.min(h - 1, cy + dy * step));
-
-        final int edge = 70;
-        if (dy > 0 && cy >= h - edge) web.scrollBy(0, (int) (step * 2));
-        if (dy < 0 && cy <= edge) web.scrollBy(0, (int) (-step * 2));
-
-        cursor.setPos(cx, cy);
-    }
-
-    private void click() {
-        long t = SystemClock.uptimeMillis();
-        web.requestFocus();
-        MotionEvent d = MotionEvent.obtain(t, t, MotionEvent.ACTION_DOWN, cx, cy, 0);
-        d.setSource(InputDevice.SOURCE_TOUCHSCREEN);
-        web.dispatchTouchEvent(d);
-        d.recycle();
-        handler.postDelayed(new Runnable() {
-            @Override
-            public void run() {
-                long t2 = SystemClock.uptimeMillis();
-                MotionEvent u = MotionEvent.obtain(t2, t2, MotionEvent.ACTION_UP, cx, cy, 0);
-                u.setSource(InputDevice.SOURCE_TOUCHSCREEN);
-                web.dispatchTouchEvent(u);
-                u.recycle();
-            }
-        }, 60);
-    }
-
-    @Override
-    protected void onResume() {
-        super.onResume();
-        web.onResume();
-    }
-
-    @Override
-    protected void onPause() {
-        web.onPause();
-        CookieManager.getInstance().flush();
-        super.onPause();
-    }
-
-    @Override
-    protected void onDestroy() {
-        root.removeAllViews();
-        web.destroy();
-        super.onDestroy();
-    }
-
-    private static class CursorView extends View {
-        private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final Paint stroke = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private float x, y;
-
-        CursorView(Context c) {
-            super(c);
-            setFocusable(false);
-            setClickable(false);
-            fill.setColor(Color.argb(170, 255, 255, 255));
-            stroke.setColor(Color.BLACK);
-            stroke.setStyle(Paint.Style.STROKE);
-            stroke.setStrokeWidth(4);
-        }
-
-        void setPos(float px, float py) {
-            x = px;
-            y = py;
-            invalidate();
-        }
-
-        @Override
-        protected void onDraw(Canvas canvas) {
-            canvas.drawCircle(x, y, 16, fill);
-            canvas.drawCircle(x, y, 16, stroke);
-        }
-
-        @Override
-        public boolean onTouchEvent(MotionEvent event) {
-            return false;
-        }
-    }
-}
+                    video("if(v.paused)v.play(
